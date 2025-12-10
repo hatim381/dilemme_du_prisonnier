@@ -21,6 +21,8 @@ class Agent(ABC):
         self.name = name
         self.history: List[str] = []
         self.score = 0
+        self.agent_type = "Base"
+        self.context_mentioned = False
 
     @abstractmethod
     def make_move(self, opponent_history: List[str]) -> str:
@@ -40,6 +42,7 @@ class StrategyAgent(Agent):
     def __init__(self, name: str, strategy: str):
         super().__init__(name)
         self.strategy = strategy
+        self.agent_type = "Strategy"
 
     def make_move(self, opponent_history: List[str]) -> str:
         if self.strategy == "random":
@@ -60,17 +63,35 @@ class StrategyAgent(Agent):
             # Default to random if strategy unknown
             return random.choice([COOPERATE, DEFECT])
 
+# Behavioral Profiles
+PROFILES = {
+    "default": "Your goal is to maximize your own score.",
+    "cooperative": "You are a cooperative agent. You prefer to cooperate unless the opponent is consistently hostile. You believe in mutual benefit.",
+    "grudger": "You are a rancorous agent. You cooperate initially, but if the opponent defects even once, you will defect forever. You do not forgive.",
+    "tit_for_tat": "You are a fair agent. You start by cooperating, then you simply copy whatever the opponent did in the last round.",
+    "random": "You are a chaotic agent. You choose your moves randomly without much regard for the history.",
+    "selfish": "You are a selfish agent. You only care about your own immediate gain. You will defect if you think you can get away with it.",
+}
+
 class OllamaAgent(Agent):
-    def __init__(self, name: str, model: str, system_prompt: str, ollama_url: str = "http://localhost:11434/api/generate"):
+    def __init__(self, name: str, model: str, profile: str = "default", include_context: bool = True, ollama_url: str = "http://localhost:11434/api/generate"):
         super().__init__(name)
         self.model = model
-        self.system_prompt = system_prompt
+        self.profile = profile
+        self.include_context = include_context
+        self.agent_type = "Ollama"
+        self.context_mentioned = include_context
+        self.system_prompt = PROFILES.get(profile.lower(), PROFILES["default"])
         self.ollama_url = ollama_url
 
     def make_move(self, opponent_history: List[str]) -> str:
         # Construct the prompt
+        context_intro = "You are playing the Iterated Prisoner's Dilemma." if self.include_context else "You are playing a game with two options."
+        
         prompt = f"""
-        You are playing the Iterated Prisoner's Dilemma.
+        {context_intro}
+        {self.system_prompt}
+        
         You can choose to Cooperate ('C') or Defect ('D').
         
         Payoff Matrix:
@@ -79,8 +100,6 @@ class OllamaAgent(Agent):
         - You Defect, Opponent Cooperates: 5 points for you, 0 for opponent
         - Both Defect: 1 point each
 
-        Your goal is to maximize your own score over the long run.
-        
         Game History (last 5 moves):
         """
         
@@ -97,10 +116,9 @@ class OllamaAgent(Agent):
         payload = {
             "model": self.model,
             "prompt": prompt,
-            "system": self.system_prompt,
             "stream": False,
             "options": {
-                "temperature": 0.5  # Deterministic but slightly creative
+                "temperature": 0.5
             }
         }
 
@@ -148,10 +166,14 @@ class Game:
         round_data = {
             "round": len(self.history) + 1,
             "agent1_name": self.agent1.name,
+            "agent1_type": self.agent1.agent_type,
+            "agent1_context_mentioned": self.agent1.context_mentioned,
             "agent1_move": move1,
             "agent1_score": score1,
             "agent1_total_score": self.agent1.score,
             "agent2_name": self.agent2.name,
+            "agent2_type": self.agent2.agent_type,
+            "agent2_context_mentioned": self.agent2.context_mentioned,
             "agent2_move": move2,
             "agent2_score": score2,
             "agent2_total_score": self.agent2.score,
