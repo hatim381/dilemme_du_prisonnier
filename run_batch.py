@@ -6,7 +6,7 @@ from game_engine import Game, StrategyAgent, OllamaAgent, PROFILES
 # Configuration
 ROUNDS = 10
 OUTPUT_DIR = "results"
-OLLAMA_MODELS = ["llama3", "mistral"] # Add more models here as needed
+OLLAMA_MODELS = ["mistral"] # phi:mini not found, using mistral only
 
 # Definitions
 STRATEGIES = ["tit_for_tat", "random", "always_cooperate", "always_defect", "grim_trigger"]

@@ -1,7 +1,7 @@
 import random
-import requests
 import pandas as pd
 import json
+import ollama
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Dict, Any
 
@@ -74,7 +74,7 @@ PROFILES = {
 }
 
 class OllamaAgent(Agent):
-    def __init__(self, name: str, model: str, profile: str = "default", include_context: bool = True, ollama_url: str = "http://localhost:11434/api/generate"):
+    def __init__(self, name: str, model: str, profile: str = "default", include_context: bool = True):
         super().__init__(name)
         self.model = model
         self.profile = profile
@@ -82,7 +82,6 @@ class OllamaAgent(Agent):
         self.agent_type = "Ollama"
         self.context_mentioned = include_context
         self.system_prompt = PROFILES.get(profile.lower(), PROFILES["default"])
-        self.ollama_url = ollama_url
 
     def make_move(self, opponent_history: List[str]) -> str:
         # Construct the prompt
@@ -113,20 +112,9 @@ class OllamaAgent(Agent):
             
         prompt += "\nBased on this, what is your next move? Respond with ONLY the single character 'C' or 'D'."
 
-        payload = {
-            "model": self.model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "temperature": 0.5
-            }
-        }
-
         try:
-            response = requests.post(self.ollama_url, json=payload)
-            response.raise_for_status()
-            result = response.json()
-            move = result.get("response", "").strip().upper()
+            response = ollama.generate(model=self.model, prompt=prompt, system=self.system_prompt, options={"temperature": 0.5})
+            move = response['response'].strip().upper()
             
             # Basic validation
             if "C" in move and "D" not in move:
