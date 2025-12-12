@@ -1,9 +1,10 @@
 import random
 import pandas as pd
 import json
+import os
 import ollama
 from abc import ABC, abstractmethod
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Optional
 
 # Constants
 COOPERATE = "C"
@@ -23,6 +24,7 @@ class Agent(ABC):
         self.score = 0
         self.agent_type = "Base"
         self.context_mentioned = False
+        self.temperature = None  # Par défaut None pour les agents sans température
 
     @abstractmethod
     def make_move(self, opponent_history: List[str]) -> str:
@@ -74,7 +76,14 @@ PROFILES = {
 }
 
 class OllamaAgent(Agent):
-    def __init__(self, name: str, model: str, profile: str = "default", include_context: bool = True):
+    def __init__(
+        self,
+        name: str,
+        model: str,
+        profile: str = "default",
+        include_context: bool = True,
+        temperature: float = 0.7,
+    ):
         super().__init__(name)
         self.model = model
         self.profile = profile
@@ -82,8 +91,9 @@ class OllamaAgent(Agent):
         self.agent_type = "Ollama"
         self.context_mentioned = include_context
         self.system_prompt = PROFILES.get(profile.lower(), PROFILES["default"])
+        self.temperature = temperature
 
-    def make_move(self, opponent_history: List[str]) -> str:
+    def make_move(self, opponent_history: List[str]) -> Optional[str]:
         # Construct the prompt
         context_intro = "You are playing the Iterated Prisoner's Dilemma." if self.include_context else "You are playing a game with two options."
         
@@ -113,25 +123,29 @@ class OllamaAgent(Agent):
         prompt += "\nBased on this, what is your next move? Respond with ONLY the single character 'C' or 'D'."
 
         try:
-            response = ollama.generate(model=self.model, prompt=prompt, system=self.system_prompt, options={"temperature": 0.5})
-            move = response['response'].strip().upper()
-            
+            response = ollama.generate(
+                model=self.model,
+                prompt=prompt,
+                system=self.system_prompt,
+                options={"temperature": self.temperature},
+            )
+            move = response["response"].strip().upper()
+
             # Basic validation
             if "C" in move and "D" not in move:
                 return COOPERATE
-            elif "D" in move and "C" not in move:
+            if "D" in move and "C" not in move:
                 return DEFECT
-            elif move == "C" or move == "D":
+            if move == "C" or move == "D":
                 return move
-            else:
-                # Fallback if LLM output is messy, try to parse or default to Cooperate
-                if "COOPERATE" in move: return COOPERATE
-                if "DEFECT" in move: return DEFECT
-                return COOPERATE # Default fallback
-                
+
+            # Aucune interprétation fiable, on renvoie None pour signaler l'échec
+            return None
+
         except Exception as e:
-            print(f"Error calling Ollama for agent {self.name}: {e}")
-            return COOPERATE # Fallback on error
+            # Ne pas print pour éviter le spam dans les versions parallèles
+            # print(f"Error calling Ollama for agent {self.name}: {e}")
+            return None
 
 class Game:
     def __init__(self, agent1: Agent, agent2: Agent):
@@ -142,6 +156,14 @@ class Game:
     def play_round(self):
         move1 = self.agent1.make_move(self.agent2.history)
         move2 = self.agent2.make_move(self.agent1.history)
+
+        # Garantit une action valide même si l'agent a renvoyé None ou autre chose
+        if move1 not in (COOPERATE, DEFECT):
+            # Ne pas print pour éviter le spam dans les versions parallèles
+            move1 = COOPERATE
+        if move2 not in (COOPERATE, DEFECT):
+            # Ne pas print pour éviter le spam dans les versions parallèles
+            move2 = COOPERATE
 
         self.agent1.update_history(move1)
         self.agent2.update_history(move2)
@@ -156,31 +178,42 @@ class Game:
             "agent1_name": self.agent1.name,
             "agent1_type": self.agent1.agent_type,
             "agent1_context_mentioned": self.agent1.context_mentioned,
+            "agent1_temperature": self.agent1.temperature,
             "agent1_move": move1,
             "agent1_score": score1,
             "agent1_total_score": self.agent1.score,
             "agent2_name": self.agent2.name,
             "agent2_type": self.agent2.agent_type,
             "agent2_context_mentioned": self.agent2.context_mentioned,
+            "agent2_temperature": self.agent2.temperature,
             "agent2_move": move2,
             "agent2_score": score2,
             "agent2_total_score": self.agent2.score,
         }
         self.history.append(round_data)
 
-    def run_game(self, rounds: int):
+    def run_game(self, rounds: int, verbose: bool = False):
         self.agent1.reset()
         self.agent2.reset()
         self.history = []
         
-        print(f"Starting game: {self.agent1.name} vs {self.agent2.name} for {rounds} rounds.")
+        if verbose:
+            print(f"Starting game: {self.agent1.name} vs {self.agent2.name} for {rounds} rounds.")
         for _ in range(rounds):
             self.play_round()
-        print("Game over.")
+        if verbose:
+            print("Game over.")
 
-    def save_results(self, filename: str):
+    def save_results(self, filename: str, verbose: bool = False):
+        if not self.history:
+            raise ValueError(f"Cannot save empty history for game {self.agent1.name} vs {self.agent2.name}")
+        
         df = pd.DataFrame(self.history)
-        # Ensure directory exists if needed, but here we assume local path
+        
+        # S'assurer que le répertoire existe
+        os.makedirs(os.path.dirname(filename) if os.path.dirname(filename) else ".", exist_ok=True)
+        
         df.to_parquet(filename, index=False)
-        print(f"Results saved to {filename}")
+        if verbose:
+            print(f"Results saved to {filename} ({len(df)} rows)")
         return df
